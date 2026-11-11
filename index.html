@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#111111">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Chicken Coop">
+<title>The Chicken Coop</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="styles.css?v=tcc1.0">
+</head>
+<body>
+
+<div id="device-screen" style="display:none">
+  <form class="login-box" onsubmit="event.preventDefault();vincularDispositivo()">
+    <img src="logo.png" style="width:120px;height:120px;object-fit:contain;margin-bottom:6px">
+    <div class="login-title">The Chicken Coop</div>
+    <div class="login-sub">Iniciá sesión con la cuenta del local</div>
+    <input type="email" id="dv-email" name="username" placeholder="Mail de la cuenta" autocomplete="username" style="margin-bottom:8px">
+    <input type="password" id="dv-pass" name="password" placeholder="Contraseña" autocomplete="current-password" style="margin-bottom:12px">
+    <button type="submit" id="dv-btn" class="btn btnp" style="width:100%;margin-bottom:10px">Ingresar</button>
+    <div class="pin-error" id="dv-error"></div>
+    <div style="font-size:10px;color:var(--tx3);font-family:var(--mo);margin-top:8px">Se hace una sola vez por dispositivo. Después entrás con tu PIN como siempre.</div>
+  </form>
+</div>
+
+<div id="login-screen" style="display:none">
+  <div class="login-box">
+    <img src="logo.png" style="width:120px;height:120px;object-fit:contain;margin-bottom:6px">
+    <div class="login-title">The Chicken Coop</div>
+    <div class="login-sub">Ingresá tu PIN</div>
+    <div class="login-user-sel">
+      <button class="usel-btn active" id="usel-dueno" onclick="selUser('dueno')">Dueño</button>
+      <button class="usel-btn" id="usel-empleado" onclick="selUser('empleado')">Empleado</button>
+    </div>
+    <div class="pin-display" id="pin-display">····</div>
+    <div class="pin-pad">
+      <button class="pin-btn" onclick="pinPress('1')">1</button>
+      <button class="pin-btn" onclick="pinPress('2')">2</button>
+      <button class="pin-btn" onclick="pinPress('3')">3</button>
+      <button class="pin-btn" onclick="pinPress('4')">4</button>
+      <button class="pin-btn" onclick="pinPress('5')">5</button>
+      <button class="pin-btn" onclick="pinPress('6')">6</button>
+      <button class="pin-btn" onclick="pinPress('7')">7</button>
+      <button class="pin-btn" onclick="pinPress('8')">8</button>
+      <button class="pin-btn" onclick="pinPress('9')">9</button>
+      <button class="pin-btn pin-clear" onclick="pinClear()">✕</button>
+      <button class="pin-btn" onclick="pinPress('0')">0</button>
+      <button class="pin-btn pin-ok" onclick="pinOk()">✓</button>
+    </div>
+    <div class="pin-error" id="pin-error"></div>
+  </div>
+</div>
+
+<div id="app-screen" style="display:none">
+  <div class="shell">
+    <div class="topbar">
+      <div class="tl">
+        <h1><img src="logo.png" style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:5px">The Chicken Coop</h1>
+        <div class="sub" id="hdr-sub"></div>
+      </div>
+      <div class="tr">
+        <div class="spill">
+          <div class="sdot" id="sdot"></div>
+          <span class="slbl" id="slbl">–</span>
+        </div>
+        <div class="dnav">
+          <button class="nb" onclick="chDay(-1)">‹</button>
+          <div style="position:relative;display:inline-block">
+            <div class="dnd" id="dnd" onclick="abrirCalendario()" style="cursor:pointer"></div>
+            <input type="date" id="day-picker" onchange="goToDate(this.value)" style="position:absolute;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none;border:none;padding:0;margin:0">
+          </div>
+          <button class="nb" onclick="chDay(1)">›</button>
+        </div>
+        <button class="nb" onclick="doLogout()" style="font-size:10px;width:auto;padding:0 6px">salir</button>
+      </div>
+    </div>
+    <div class="content" id="content"></div>
+    <nav class="bn" id="bottom-nav"></nav>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="app.js?v=tcc1.0"></script>
+</body>
+</html>

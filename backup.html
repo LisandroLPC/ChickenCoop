@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Backup The Chicken Coop</title>
+<style>
+  :root{--bg:#f2f2f0;--sf:#ffffff;--tx:#111111;--tx2:#5c5c5c;--ac:#d0021b;--gn:#1a9e3a;--rd:#c62828;--br:#dcdcd7}
+  body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,sans-serif;padding:16px}
+  .box{max-width:520px;margin:0 auto}
+  h1{font-size:20px;margin:6px 0 4px}
+  p{color:var(--tx2);font-size:13px;line-height:1.5}
+  button{width:100%;padding:14px;border-radius:10px;border:0;background:var(--ac);color:#fff;font-size:15px;font-weight:700;cursor:pointer;margin-top:8px}
+  button:disabled{opacity:.5;cursor:wait}
+  table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px}
+  td{padding:6px 4px;border-bottom:1px solid var(--br)}
+  td:last-child{text-align:right;font-family:ui-monospace,monospace}
+  .ok{color:var(--gn)}.err{color:var(--rd)}
+  #estado{margin-top:12px;font-size:13px}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>Backup completo — The Chicken Coop</h1>
+  <p>Baja <b>todas</b> las tablas de la base a tu dispositivo. Genera dos archivos:<br>
+  • <b>.json</b>: la copia completa de los datos.<br>
+  • <b>.sql</b>: el script para restaurarlos en Supabase si alguna vez hace falta.<br>
+  No modifica nada en la base: solo lee.</p>
+  <button id="btn" onclick="hacerBackup()">⬇ Hacer backup ahora</button>
+  <div id="estado"></div>
+  <table id="tabla"></table>
+</div>
+<script>
+const SB='https://vmsjwvudqxfadrcasexu.supabase.co';
+const SK='sb_publishable_iR1iNeJ1U1tkTMzYgfpelA_ESUgNOTs';
+// Orden pensado para restaurar: primero las tablas "padre", después las que dependen de ellas
+const TABLAS=['usuarios','stock_groups','stock_variants','insumos','clientes_cc','cliente_precios','ventas','caja_movimientos','compras','compras_items','cortes','cortes_items','elaboraciones','elaboraciones_items','gastos','cierres','retiros_stock'];
+const PAGINA=1000;
+
+// Usa la sesión del dispositivo (la misma de la app): sin sesión la base no devuelve nada
+async function token(){
+  let a=null;try{a=JSON.parse(localStorage.getItem('tcc1_auth'));}catch{}
+  if(!a?.refresh_token)throw new Error('Este dispositivo no tiene sesión. Abrí la app, ingresá con la cuenta del local y volvé a esta página.');
+  if(a.expires_at-Date.now()<120000){
+    const r=await fetch(SB+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:{apikey:SK,'Content-Type':'application/json'},body:JSON.stringify({refresh_token:a.refresh_token})});
+    if(!r.ok)throw new Error('La sesión venció. Abrí la app y volvé a ingresar.');
+    const j=await r.json();
+    a={...a,access_token:j.access_token,refresh_token:j.refresh_token,expires_at:Date.now()+((j.expires_in||3600)*1000)};
+    localStorage.setItem('tcc1_auth',JSON.stringify(a));
+  }
+  return a.access_token;
+}
+async function bajarTabla(t){
+  let filas=[],desde=0;
+  while(true){
+    const tk=await token();
+    const r=await fetch(SB+'/rest/v1/'+t+'?select=*&order=id',{headers:{apikey:SK,Authorization:'Bearer '+tk,Range:desde+'-'+(desde+PAGINA-1),'Range-Unit':'items'}});
+    if(r.status===404)return null; // la tabla todavía no existe (ej: antes de correr la migración)
+    if(!r.ok)throw new Error(t+': '+await r.text());
+    const lote=await r.json();
+    filas=filas.concat(lote);
+    if(lote.length<PAGINA)break;
+    desde+=PAGINA;
+  }
+  return filas;
+}
+function descargar(nombre,contenido,tipo){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([contenido],{type:tipo}));
+  a.download=nombre;document.body.appendChild(a);a.click();a.remove();
+}
+async function hacerBackup(){
+  const btn=document.getElementById('btn'),est=document.getElementById('estado'),tb=document.getElementById('tabla');
+  btn.disabled=true;tb.innerHTML='';est.textContent='Bajando datos...';
+  const datos={generado:new Date().toISOString(),proyecto:'vmsjwvudqxfadrcasexu',tablas:{}};
+  let sql='-- Restauración de backup The Chicken Coop — generado '+datos.generado+'\n-- Correr en Supabase > SQL Editor DESPUÉS de tener las tablas creadas (setup.sql + migraciones).\n-- No pisa filas que ya existen (on conflict do nothing).\nbegin;\n';
+  try{
+    for(const t of TABLAS){
+      est.textContent='Bajando '+t+'...';
+      const filas=await bajarTabla(t);
+      if(filas===null){tb.innerHTML+=`<tr><td>${t}</td><td style="color:#8a8680">no existe todavía</td></tr>`;continue;}
+      datos.tablas[t]=filas;
+      tb.innerHTML+=`<tr><td>${t}</td><td class="ok">${filas.length} filas</td></tr>`;
+      if(filas.length){
+        const json=JSON.stringify(filas);
+        if(json.includes('$lpc$'))throw new Error('Dato raro en '+t+' (contiene $lpc$), avisale a Claude');
+        sql+=`insert into public.${t} select * from json_populate_recordset(null::public.${t}, $lpc$${json}$lpc$) on conflict (id) do nothing;\n`;
+      }
+    }
+    sql+='commit;\n';
+    const f=datos.generado.slice(0,16).replace(/[-:T]/g,'');
+    descargar(`TCC_backup_${f}.json`,JSON.stringify(datos),'application/json');
+    window._sqlPend={nombre:`TCC_restaurar_${f}.sql`,sql};
+    est.innerHTML='<span class="ok">✓ Paso 1 listo:</span> se descargó el .json.<br>Ahora tocá el segundo botón para bajar el .sql de restauración.'+
+      '<button onclick="descargar(_sqlPend.nombre,_sqlPend.sql,\'text/plain\');this.outerHTML=\'<div class=ok style=margin-top:8px>✓ Listo: se bajaron los 2 archivos. Guardalos fuera del dispositivo (Drive, mail, pendrive).</div>\'">⬇ Bajar archivo .sql (paso 2)</button>';
+  }catch(e){
+    est.innerHTML='<span class="err">✕ Error: '+(e.message||e)+'</span><br>No se descargó nada. Revisá la conexión y probá de nuevo.';
+  }
+  btn.disabled=false;
+}
+</script>
+</body>
+</html>
