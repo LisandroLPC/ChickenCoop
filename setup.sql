@@ -258,6 +258,24 @@ create table if not exists retiros_stock (
 );
 create index if not exists retiros_stock_day on retiros_stock(day);
 
+-- ══ PROVEEDORES (Cta.Cte. de proveedores) ═══════════════════════
+create table if not exists proveedores (
+  id text primary key, nombre text not null, telefono text, cuit text,
+  plazo_dias integer default 0, note text, activo boolean default true,
+  created_at timestamptz default now()
+);
+alter table compras add column if not exists proveedor_id text references proveedores(id);
+alter table compras add column if not exists vence date;
+create table if not exists pagos_proveedor (
+  id text primary key, day date not null,
+  proveedor_id text not null references proveedores(id),
+  monto numeric not null, pago_efectivo numeric default 0, pago_transferencia numeric default 0,
+  note text, usuario text, time text, created_at timestamptz default now()
+);
+create index if not exists compras_proveedor_idx on compras(proveedor_id);
+create index if not exists pagos_proveedor_prov_idx on pagos_proveedor(proveedor_id);
+
+
 
 -- Usuarios internos de la app (PIN). Solo si la tabla está vacía.
 -- CAMBIÁ ESTOS PIN APENAS ENTRES (Config > Usuarios).
@@ -274,7 +292,7 @@ declare t text;
 begin
   foreach t in array array['usuarios','stock_groups','stock_variants','insumos','clientes_cc','cliente_precios',
     'ventas','caja_movimientos','compras','compras_items','cortes','cortes_items','elaboraciones',
-    'elaboraciones_items','gastos','cierres','retiros_stock']
+    'elaboraciones_items','gastos','cierres','retiros_stock','proveedores','pagos_proveedor']
   loop
     execute format('alter table public.%I enable row level security', t);
     execute format('drop policy if exists solo_local on public.%I', t);
@@ -290,7 +308,7 @@ update auth.users set email_confirmed_at = now() where email_confirmed_at is nul
 commit;
 
 -- ══ CONTROL ════════════════════════════════════════════════════
--- Tiene que dar 17 filas, todas con rls = true, anon_puede = false y logueado_puede = true
+-- Tiene que dar 19 filas, todas con rls = true, anon_puede = false y logueado_puede = true
 select c.relname tabla, c.relrowsecurity rls,
   has_table_privilege('anon', c.oid, 'select') anon_puede,
   has_table_privilege('authenticated', c.oid, 'insert') logueado_puede

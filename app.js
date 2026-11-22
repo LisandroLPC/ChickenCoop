@@ -116,7 +116,7 @@ function bannerSync(){
 function aplicarPendiente(op){
   const porId=(arr,row)=>{const i=arr.findIndex(x=>x.id===row.id);if(i>=0)arr[i]={...arr[i],...row};else arr.push({...row});};
   const porDia=(map,row)=>{const d=row.day;if(!map[d])map[d]=[];porId(map[d],row);};
-  const lista={stock_groups:'sg',stock_variants:'vr',compras:'co',compras_items:'coi',cortes:'ct',cortes_items:'cti',elaboraciones:'el',elaboraciones_items:'eli',insumos:'ins',clientes_cc:'ccl',cliente_precios:'cp',usuarios:'us',retiros_stock:'rt'};
+  const lista={stock_groups:'sg',stock_variants:'vr',compras:'co',compras_items:'coi',cortes:'ct',cortes_items:'cti',elaboraciones:'el',elaboraciones_items:'eli',insumos:'ins',clientes_cc:'ccl',cliente_precios:'cp',usuarios:'us',retiros_stock:'rt',proveedores:'prov',pagos_proveedor:'pp'};
   const dias={ventas:'ve',gastos:'ga',caja_movimientos:'caja'};
   if(op.k==='up'){
     const rows=Array.isArray(op.d)?op.d:[op.d];
@@ -145,6 +145,7 @@ let S={
   ccl:LC.g('ccl')||[],
   cp:LC.g('cp')||[],
   rt:LC.g('rt')||[],
+  prov:LC.g('prov')||[],pp:LC.g('pp')||[],
   cfg:LC.g('cfg')||{},
 };
 // Merge defaults: completar los campos que falten en cfg
@@ -167,6 +168,7 @@ let sesion=SC.g('sesion')||null;
 let ticketItems=[],corteItems=[],elabItems=[],compraItems=[];
 let pagoSeleccionado='Efectivo';
 let tkClienteId=null,tkHora='';
+let provId=null;
 let ccClienteId=null,ccTicketAbierto=null,ccSeleccionados=new Set();
 let charts={},rMonth=arMonth(),rTab='dia',prodTab='corte',comprasTab='mercaderia',cmpA=null,cmpB=null,cmpMetric='monto';
 let loginRol='dueno',pinBuf='';
@@ -262,7 +264,7 @@ function sgV(){return S.sg.filter(g=>g.tipo==='venta'||!g.tipo)}
 function sgP(){return S.sg.filter(g=>g.tipo==='produccion')}
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2400)}
 function sync(s,l){const d=document.getElementById('sdot'),lb=document.getElementById('slbl');if(d){d.className='sdot '+s;lb.textContent=l}}
-function save(){LC.s('us',S.us);LC.s('sg',S.sg);LC.s('vr',S.vr);LC.s('ve',S.ve);LC.s('caja',S.caja);LC.s('co',S.co);LC.s('coi',S.coi);LC.s('ct',S.ct);LC.s('cti',S.cti);LC.s('el',S.el);LC.s('eli',S.eli);LC.s('ga',S.ga);LC.s('ins',S.ins);LC.s('cierres',S.cierres);LC.s('ccl',S.ccl);LC.s('cp',S.cp);LC.s('rt',S.rt);LC.s('cfg',S.cfg);}
+function save(){LC.s('us',S.us);LC.s('sg',S.sg);LC.s('vr',S.vr);LC.s('ve',S.ve);LC.s('caja',S.caja);LC.s('co',S.co);LC.s('coi',S.coi);LC.s('ct',S.ct);LC.s('cti',S.cti);LC.s('el',S.el);LC.s('eli',S.eli);LC.s('ga',S.ga);LC.s('ins',S.ins);LC.s('cierres',S.cierres);LC.s('ccl',S.ccl);LC.s('cp',S.cp);LC.s('rt',S.rt);LC.s('prov',S.prov);LC.s('pp',S.pp);LC.s('cfg',S.cfg);}
 function toggleDetail(id){const el=document.getElementById(id);if(el)el.style.display=el.style.display==='none'?'block':'none';}
 // Gastos que salen del cajón del día (no los de compras ni los del local)
 function esGastoCaja(g,compraGastoIds){return!compraGastoIds.has(g.id)&&!g.fuera_caja;}
@@ -323,7 +325,7 @@ async function loadAll(){
   sync('busy','cargando...');
   try{
     await flush(); // primero subir lo pendiente
-    const[us,sg,vr,ve,caja,co,coi,ct,cti,el,eli,ga,ins,cierresArr,ccl,cp,rt]=await Promise.all([
+    const[us,sg,vr,ve,caja,co,coi,ct,cti,el,eli,ga,ins,cierresArr,ccl,cp,rt,prov,pp]=await Promise.all([
       sbQ('usuarios','order=id'),sbQ('stock_groups','order=name'),sbQ('stock_variants','order=name'),
       sbQ('ventas','order=created_at,id'),sbQ('caja_movimientos','order=created_at,id'),
       sbQ('compras','order=created_at,id'),sbQ('compras_items','order=created_at,id'),
@@ -334,9 +336,11 @@ async function loadAll(){
       sbQ('clientes_cc','order=nombre'),
       sbQ('cliente_precios','order=id').catch(()=>[]), // tabla nueva: si todavía no se corrió la migración, sigue funcionando
       sbQ('retiros_stock','order=created_at,id').catch(()=>null), // idem: tabla nueva de retiros
+      sbQ('proveedores','order=nombre').catch(()=>null), // Cta.Cte. de proveedores
+      sbQ('pagos_proveedor','order=created_at,id').catch(()=>null),
     ]);
     S.us=us;S.sg=sg;S.vr=vr;S.co=co;S.coi=coi;S.ct=ct;S.cti=cti;S.el=el;S.eli=eli;
-    S.ccl=ccl||[];S.cp=cp||[];if(rt)S.rt=rt;
+    S.ccl=ccl||[];S.cp=cp||[];if(rt)S.rt=rt;if(prov)S.prov=prov;if(pp)S.pp=pp;
     S.ins=ins.map(i=>({...i,costUnit:i.cost_unit||0,stock_qty:i.stock_qty||0}));
     const cm2={};
     (cierresArr||[]).forEach(c=>{
@@ -1568,17 +1572,19 @@ function rComprasMerc(){
   const sgVOpts=sgV().map(g=>`<option value="sgv_${g.id}" data-u="${g.unit||'kg'}">${esc(g.name)} (${g.unit||'kg'})</option>`).join('');
   const insOpts=S.ins.map(i=>`<option value="ins_${i.id}" data-u="${i.unit}">${esc(i.name)} (${i.unit})</option>`).join('');
   const allOpts=`<optgroup label="Stock de venta">${sgVOpts||'<option disabled>Sin grupos</option>'}</optgroup><optgroup label="Insumos">${insOpts||'<option disabled>Sin insumos</option>'}</optgroup>`;
-  const cards=todC.length?todC.map(c=>{const items=S.coi.filter(i=>i.compra_id===c.id);const pi=[];if(c.pago_efectivo>0)pi.push(`Ef: ${$m(c.pago_efectivo)}`);if(c.pago_transferencia>0)pi.push(`Tr: ${$m(c.pago_transferencia)}`);
+  const cards=todC.length?todC.map(c=>{const items=S.coi.filter(i=>i.compra_id===c.id);const pi=[];if(c.pago_efectivo>0)pi.push(`Ef: ${$m(c.pago_efectivo)}`);if(c.pago_transferencia>0)pi.push(`Tr: ${$m(c.pago_transferencia)}`);if(c.proveedor_id&&deudaCompra(c)>0)pi.push(`A cuenta: ${$m(deudaCompra(c))}${c.vence?' · vence '+fD(c.vence):''}`);
     return`<div class="lote-card"><div class="lote-card-header"><div><div style="font-size:13px;font-weight:600">${esc(c.proveedor)}</div><div style="font-size:10px;color:var(--tx3);font-family:var(--mo)">${c.time||''}${c.nro_factura?' · F/'+esc(c.nro_factura):''}</div>${pi.length?`<div style="font-size:10px;color:var(--tx2);font-family:var(--mo)">${pi.join(' + ')}</div>`:''}</div><div style="text-align:right"><div style="font-size:13px;font-family:var(--mo);color:var(--ac)">${$m(c.total)}</div><button class="dbtn" onclick="delCompra('${c.id}')" style="margin-top:3px">✕</button></div></div>
     ${items.length?`<div class="lote-card-items">${items.map(i=>`<div style="font-size:10px;color:var(--tx2);padding:2px 0">${esc(i.descripcion)}: ${i.qty_compra} ${i.unit_compra||''} ${i.qty_real?'→ '+fQ(i.qty_real,i.unit_real):''} — ${$m(i.precio_total)}${i.cost_unit_calculado?' ('+$d2(i.cost_unit_calculado)+'/'+i.unit_real+')':''}</div>`).join('')}</div>`:''}
     </div>`;
   }).join(''):`<div class="empty-row">Sin compras hoy</div>`;
-  return`<div class="info-box">🛒 Al guardar: actualiza stock y costos, y registra el total como gasto del día.</div>
+  return`<div class="info-box">🛒 Al guardar: actualiza stock y costos, y registra el total como gasto del día. Si elegís un proveedor con cuenta, lo que no pagás en el momento queda <b>a cuenta</b>.</div>
   <div class="sh">Nueva factura</div>
   <div class="blk"><div class="bt">Datos de la factura</div>
-    <div class="fr"><div class="fl" style="flex:2"><label>Proveedor</label><input type="text" id="cp-prov" placeholder="Ej: Avícola Don Juan"></div><div class="fl" style="max-width:110px"><label>Nro. Factura</label><input type="text" id="cp-fact" placeholder="opcional"></div></div>
+    <div class="fr"><div class="fl" style="flex:2"><label>Proveedor</label><select id="cp-provsel" onchange="onCpProv()"><option value="">— Otro / pago en el momento —</option>${provActivos().map(p=>`<option value="${p.id}">${esc(p.nombre)}${p.plazo_dias?' · '+p.plazo_dias+' días':''}</option>`).join('')}</select></div><div class="fl" style="max-width:110px"><label>Nro. Factura</label><input type="text" id="cp-fact" placeholder="opcional"></div></div>
+    <div class="fr" id="cp-prov-row"><div class="fl"><label>Nombre del proveedor</label><input type="text" id="cp-prov" placeholder="Ej: Avícola Don Juan"></div></div>
+    <div class="fr" id="cp-vence-row" style="display:none"><div class="fl" style="max-width:150px"><label>Vence</label><input type="date" id="cp-vence"></div><div class="fl"><div id="cp-deuda" style="font-size:11px;font-family:var(--mo);color:var(--rd);margin-top:18px"></div></div></div>
     <div class="fr"><div class="fl"><label>Nota</label><input type="text" id="cp-note" placeholder=""></div></div>
-    <div style="font-size:9px;color:var(--tx2);font-family:var(--mo);margin-bottom:6px;margin-top:4px">FORMA DE PAGO</div>
+    <div style="font-size:9px;color:var(--tx2);font-family:var(--mo);margin-bottom:6px;margin-top:4px">FORMA DE PAGO <span style="color:var(--tx3)">(con proveedor a cuenta: poné solo lo que pagás hoy, 0 si va todo a cuenta)</span></div>
     <div class="fr"><div class="fl"><label>Efectivo $</label><input type="number" id="cp-ef" placeholder="0" oninput="calcCpTotal()"></div><div class="fl"><label>Transferencia $</label><input type="number" id="cp-tr" placeholder="0" oninput="calcCpTotal()"></div><div class="fl"><label>Total</label><input type="text" id="cp-tot" readonly style="color:var(--ac)"></div></div>
   </div>
   <div class="blk"><div class="bt">Artículos</div>
@@ -1598,7 +1604,16 @@ function rComprasMerc(){
   <button class="btn btnp" onclick="saveCompra()" style="width:100%;margin-top:4px">✓ Guardar factura</button>
   <div class="sh">Compras de hoy</div>${cards}`;
 }
-function calcCpTotal(){const ef=parseFloat(document.getElementById('cp-ef')?.value)||0,tr=parseFloat(document.getElementById('cp-tr')?.value)||0;const tot=document.getElementById('cp-tot');if(tot)tot.value=ef+tr>0?$m(ef+tr):'';}
+function calcCpTotal(){const ef=parseFloat(document.getElementById('cp-ef')?.value)||0,tr=parseFloat(document.getElementById('cp-tr')?.value)||0;const tot=document.getElementById('cp-tot');const pid=document.getElementById('cp-provsel')?.value;
+  if(pid){const items=compraItems.reduce((s,x)=>s+x.precio_total,0);if(tot)tot.value=items?$m(items):'';const d=document.getElementById('cp-deuda');if(d)d.textContent=items?(items-ef-tr>0?`Queda a cuenta: ${$m(items-ef-tr)}`:items-ef-tr<0?`⚠ Pagás ${$m(ef+tr-items)} de más`:'Pagada completa'):'';return;}
+  if(tot)tot.value=ef+tr>0?$m(ef+tr):'';}
+function onCpProv(){
+  const pid=document.getElementById('cp-provsel')?.value,p=S.prov.find(x=>x.id===pid);
+  const pr=document.getElementById('cp-prov-row'),vr=document.getElementById('cp-vence-row'),ve=document.getElementById('cp-vence');
+  if(pr)pr.style.display=pid?'none':'';if(vr)vr.style.display=pid?'':'none';
+  if(ve&&p)ve.value=sumarDias(day,+p.plazo_dias||0);
+  calcCpTotal();
+}
 function onCiTipo(){
   const tipo=document.getElementById('ci-tipo')?.value;
   const refEl=document.getElementById('ci-ref');
@@ -1619,6 +1634,7 @@ function ciCurrentUnit(){const tipo=document.getElementById('ci-tipo')?.value;if
 function calcCostoUnitario(){const precio=parseFloat(document.getElementById('ci-precio')?.value)||0,qtyR=parseFloat(document.getElementById('ci-qtyr')?.value)||0,qtyC=parseFloat(document.getElementById('ci-qtyc')?.value)||0,prev=document.getElementById('costo-preview');if(!prev)return;if(precio&&(qtyR||qtyC)){const base=qtyR||qtyC,costo=precio/base,unit=ciCurrentUnit();prev.textContent=`→ Costo calculado: ${$d2(costo)}/${unit}`;prev.style.color='var(--ac)';}else{prev.textContent='';}}
 function renderCompraItems(){
   const list=document.getElementById('cp-items-list');if(!list)return;
+  calcCpTotal();
   if(!compraItems.length){list.innerHTML='';return;}
   const tot=compraItems.reduce((s,x)=>s+x.precio_total,0);
   list.innerHTML=compraItems.map((x,i)=>`<div class="compra-item"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-size:12px;font-weight:500">${esc(x.descripcion)}</div><div style="font-size:10px;color:var(--tx3);font-family:var(--mo)">${x.qty_compra} ${x.unit_compra||''} ${x.qty_real?'→ '+fQ(x.qty_real,x.unit_real):''}</div><div style="font-size:10px;color:var(--ac);font-family:var(--mo)">${$m(x.precio_total)} · costo: ${$d2(x.cost_unit_calculado||0)}/${x.unit_real||'kg'}</div><div style="font-size:9px;color:var(--tx3);font-family:var(--mo)">${x.upd_stock?'✓ stock':'○'} · ${x.upd_cost?'✓ costo':'○'}</div></div><button class="dbtn" onclick="rmCompraItem(${i})">✕</button></div></div>`).join('')
@@ -1640,12 +1656,18 @@ function addCompraItem(){
 }
 function rmCompraItem(i){compraItems.splice(i,1);renderCompraItems();}
 function saveCompra(){
-  const prov=document.getElementById('cp-prov')?.value.trim(),fact=document.getElementById('cp-fact')?.value.trim(),note=document.getElementById('cp-note')?.value.trim();
+  const provSel=S.prov.find(x=>x.id===document.getElementById('cp-provsel')?.value)||null;
+  const prov=provSel?provSel.nombre:document.getElementById('cp-prov')?.value.trim(),fact=document.getElementById('cp-fact')?.value.trim(),note=document.getElementById('cp-note')?.value.trim();
   const ef=parseFloat(document.getElementById('cp-ef')?.value)||0,tr=parseFloat(document.getElementById('cp-tr')?.value)||0;
   if(!prov)return alert('Ingresá el proveedor');if(!compraItems.length)return alert('Agregá al menos un artículo');
-  const total=(ef+tr)||compraItems.reduce((s,x)=>s+x.precio_total,0);
+  const totItems=compraItems.reduce((s,x)=>s+x.precio_total,0);
+  // Con proveedor a cuenta el total es la factura (suma de artículos) y lo pagado hoy puede ser menos: la diferencia queda como deuda
+  if(provSel&&ef+tr>totItems+0.5)return alert(`Estás pagando ${$m(ef+tr)} y la factura suma ${$m(totItems)}. Si le adelantás plata, cargala como pago en Compras → Proveedores.`);
+  const total=provSel?totItems:((ef+tr)||totItems);
+  const vence=provSel?(document.getElementById('cp-vence')?.value||sumarDias(day,+provSel.plazo_dias||0)):null;
   const cId=uid(),gastoId=uid();
   const compra={id:cId,day,proveedor:prov,nro_factura:fact||null,total,pago_efectivo:ef,pago_transferencia:tr,gasto_id:gastoId,note:note||null,usuario:sesion?.nombre||'—',time:arTime()};
+  if(provSel){compra.proveedor_id=provSel.id;compra.vence=vence;}
   const items=compraItems.map(x=>({id:uid(),compra_id:cId,...x}));
   S.co.push(compra);S.coi.push(...items);
   items.forEach(x=>{
@@ -1665,6 +1687,7 @@ function saveCompra(){
   const gastoRow={id:gastoId,day,descripcion:'Compra: '+prov+(fact?' F/'+fact:''),cat:'Materia prima',amount:total,metodo:tr>ef?'transferencia':'efectivo',pago_efectivo:ef,pago_transferencia:tr,usuario:sesion?.nombre||'—',time:arTime()};
   if(!S.ga[day])S.ga[day]=[];S.ga[day].push(gastoRow);
   compraItems=[];save();render();
+  if(provSel&&total-ef-tr>0)toast(`Quedan ${$m(total-ef-tr)} a cuenta con ${provSel.nombre}`);
   // En orden: la compra, sus ítems y su gasto. Si se corta internet, la cola los sube después en este mismo orden.
   sbUp('compras',compra);
   if(items.length)sbUp('compras_items',items);
@@ -1677,7 +1700,7 @@ function delCompra(id){
   const c=S.co.find(x=>x.id===id);if(!c)return;
   const items=S.coi.filter(x=>x.compra_id===id);
   if(items.some(x=>x.tipo_destino==='materia_prima_cruda'&&x.usado))return alert('No se puede eliminar: esta compra ya fue usada en un Corte. Eliminá primero el corte correspondiente.');
-  if(!confirm('¿Eliminar factura? Se revierte el stock y se recalcula el costo sin esta compra.'))return;
+  if(!confirm('¿Eliminar factura? Se revierte el stock y se recalcula el costo sin esta compra.'+(c.proveedor_id?'\nTambién sale de la cuenta del proveedor (los pagos que ya le hiciste quedan registrados).':'')))return;
   items.forEach(x=>{
     if(x.tipo_destino==='stock_venta'&&x.upd_stock!==false){const g=S.sg.find(sg=>sg.id===x.ref_id);if(g)g.stock_qty=(g.stock_qty||0)-(x.qty_real||x.qty_compra);}
     else if(x.tipo_destino==='insumo'&&x.upd_stock!==false){const ins=S.ins.find(i=>i.id===x.ref_id);if(ins)ins.stock_qty=(ins.stock_qty||0)-(x.qty_real||x.qty_compra);}
@@ -1724,13 +1747,159 @@ function addGastoLocal(){
   if(!S.ga[day])S.ga[day]=[];S.ga[day].push(row);save();render();toast('Gasto del local guardado ✓');
   sbUp('gastos',row);
 }
-function setComprasTab(t){comprasTab=t;render();}
+function setComprasTab(t){comprasTab=t;provId=null;render();}
 function rCompras(){
   return`<div class="prod-tabs">
     <button class="prod-tab ${comprasTab==='mercaderia'?'active':''}" onclick="setComprasTab('mercaderia')">🛒 Mercadería</button>
+    <button class="prod-tab ${comprasTab==='prov'?'active':''}" onclick="setComprasTab('prov')">🏭 Proveedores</button>
     <button class="prod-tab ${comprasTab==='local'?'active':''}" onclick="setComprasTab('local')">🏠 Gastos del local</button>
   </div>
-  ${comprasTab==='local'?rGastosLocal():rComprasMerc()}`;
+  ${comprasTab==='local'?rGastosLocal():comprasTab==='prov'?rProveedores():rComprasMerc()}`;
+}
+
+/* ══ PROVEEDORES — CUENTA CORRIENTE ═════════════════════════════
+   - La compra a cuenta es gasto del día que se compra (ya entra en el Resultado
+     por la compra). La deuda = total - lo pagado en el momento.
+   - El pago al proveedor es monto libre "a cuenta": se imputa a las facturas
+     más viejas primero. NO genera gasto (duplicaría) y NO toca la caja del día. */
+function provActivos(){return S.prov.filter(p=>p.activo!==false).sort((a,b)=>a.nombre.localeCompare(b.nombre));}
+function nombreProv(id){return S.prov.find(p=>p.id===id)?.nombre||'';}
+function deudaCompra(c){return Math.max(0,(+c.total||0)-(+c.pago_efectivo||0)-(+c.pago_transferencia||0));}
+function comprasProv(id){return S.co.filter(c=>c.proveedor_id===id);}
+function pagosProv(id){return S.pp.filter(x=>x.proveedor_id===id);}
+// Imputación FIFO: cada factura con cuánto debía, cuánto cubrieron los pagos y cuánto falta
+function imputacionProv(id){
+  const fact=comprasProv(id).filter(c=>deudaCompra(c)>0)
+    .sort((a,b)=>String(a.vence||a.day).localeCompare(String(b.vence||b.day))||String(a.day).localeCompare(String(b.day))||String(a.created_at||'').localeCompare(String(b.created_at||'')));
+  let resto=pagosProv(id).reduce((s,x)=>s+(+x.monto||0),0);
+  return fact.map(c=>{const deuda=deudaCompra(c),cub=Math.min(deuda,Math.max(0,resto));resto-=cub;return{c,deuda,cubierto:cub,pendiente:deuda-cub};});
+}
+function resumenProv(id){
+  const aCuenta=comprasProv(id).reduce((s,c)=>s+deudaCompra(c),0);
+  const pagado=pagosProv(id).reduce((s,x)=>s+(+x.monto||0),0);
+  const hoy=arDay(),imp=imputacionProv(id).filter(x=>x.pendiente>0.5);
+  const vencido=imp.filter(x=>x.c.vence&&x.c.vence<hoy).reduce((s,x)=>s+x.pendiente,0);
+  const prox=imp.map(x=>x.c.vence).filter(v=>v&&v>=hoy).sort()[0]||null;
+  return{aCuenta,pagado,saldo:aCuenta-pagado,vencido,prox,pendientes:imp};
+}
+function diasEntre(a,b){return Math.round((new Date(b+'T12:00:00')-new Date(a+'T12:00:00'))/86400000);}
+function venceTxt(v){
+  if(!v)return'<span style="color:var(--tx3)">sin vencimiento</span>';
+  const d=diasEntre(arDay(),v);
+  if(d<0)return`<span style="color:var(--rd);font-weight:600">vencida hace ${-d} día${d===-1?'':'s'}</span>`;
+  if(d===0)return'<span style="color:var(--ac);font-weight:600">vence hoy</span>';
+  return`<span style="color:${d<=3?'var(--ac)':'var(--tx3)'}">vence en ${d} día${d===1?'':'s'} (${fD(v)})</span>`;
+}
+
+function rProveedores(){
+  if(provId)return rProvDetail(provId);
+  const lista=[...S.prov].sort((a,b)=>(a.activo===false)-(b.activo===false)||resumenProv(b.id).saldo-resumenProv(a.id).saldo);
+  const tot=lista.reduce((s,p)=>{const r=resumenProv(p.id);s.saldo+=Math.max(0,r.saldo);s.venc+=r.vencido;return s;},{saldo:0,venc:0});
+  const rows=lista.map(p=>{
+    const r=resumenProv(p.id);
+    return`<div class="lote-card" style="cursor:pointer;${p.activo===false?'opacity:.5':''}" onclick="verProv('${p.id}')">
+      <div class="lote-card-header">
+        <div><div style="font-size:14px;font-weight:600">${esc(p.nombre)}</div>
+          <div style="font-size:10px;color:var(--tx3);font-family:var(--mo)">${p.plazo_dias?`plazo ${p.plazo_dias} días`:'sin plazo'}${p.telefono?' · '+esc(p.telefono):''}</div>
+          ${r.vencido>0.5?`<div style="font-size:10px;color:var(--rd);font-family:var(--mo);font-weight:600">⚠ ${$m(r.vencido)} vencido</div>`:r.prox?`<div style="font-size:10px;font-family:var(--mo)">${venceTxt(r.prox)}</div>`:''}</div>
+        <div style="text-align:right">${Math.abs(r.saldo)>=1?`<div style="font-size:16px;font-weight:700;font-family:var(--mo);color:${r.saldo>0?'var(--rd)':'var(--gn)'}">${$m(Math.abs(r.saldo))}</div><div style="font-size:9px;color:var(--tx3);font-family:var(--mo)">${r.saldo>0?'le debés':'a tu favor'}</div>`:`<div style="font-size:9px;color:var(--tx3);font-family:var(--mo)">al día</div>`}</div>
+      </div>
+    </div>`;
+  }).join('')||`<div class="empty-row">Sin proveedores todavía</div>`;
+  return`<div class="info-box">🏭 Proveedores con cuenta: la compra se carga en <b>Mercadería</b> eligiendo el proveedor; lo que no pagás queda a cuenta. Los pagos se cargan acá, como monto libre: cancelan primero las facturas más viejas. <b>No</b> son gasto (el costo ya entró con la compra) y <b>no</b> tocan la caja del día.</div>
+  <div class="kpis"><div class="kc hi"><div class="kl">Deuda total con proveedores</div><div class="kv r">${$m(tot.saldo)}</div><div class="kh" style="color:${tot.venc>0.5?'var(--rd)':'var(--tx3)'}">${tot.venc>0.5?`${$m(tot.venc)} vencido`:'nada vencido'}</div></div></div>
+  <div class="blk"><div class="bt">Nuevo proveedor</div>
+    <div class="fr"><div class="fl" style="flex:2"><label>Nombre</label><input type="text" id="pv-nombre" placeholder="Ej: Avícola Don Juan"></div><div class="fl" style="max-width:90px"><label>Plazo (días)</label><input type="number" id="pv-plazo" placeholder="7" min="0"></div></div>
+    <div class="fr"><div class="fl"><label>Teléfono</label><input type="text" id="pv-tel" placeholder="opcional"></div><div class="fl"><label>CUIT</label><input type="text" id="pv-cuit" placeholder="opcional"></div></div>
+    <button class="btn btnp" onclick="saveProveedor()" style="width:100%;margin-top:6px">+ Crear proveedor</button>
+  </div>
+  <div class="sh">Proveedores</div>${rows}`;
+}
+function verProv(id){provId=id;render();}
+function volverProvList(){provId=null;render();}
+function provRow(p){return{id:p.id,nombre:p.nombre,telefono:p.telefono||null,cuit:p.cuit||null,plazo_dias:+p.plazo_dias||0,note:p.note||null,activo:p.activo!==false};}
+function saveProveedor(){
+  const nombre=document.getElementById('pv-nombre')?.value.trim(),plazo=parseInt(document.getElementById('pv-plazo')?.value)||0;
+  const tel=document.getElementById('pv-tel')?.value.trim(),cuit=document.getElementById('pv-cuit')?.value.trim();
+  if(!nombre)return alert('Ingresá el nombre del proveedor');
+  if(S.prov.some(p=>p.nombre.toLowerCase()===nombre.toLowerCase())&&!confirm('Ya hay un proveedor con ese nombre. ¿Crear otro igual?'))return;
+  const row=provRow({id:uid(),nombre,telefono:tel,cuit,plazo_dias:plazo});
+  S.prov.push(row);save();render();toast('Proveedor creado ✓');
+  sbUp('proveedores',row);
+}
+function updProv(id,campo,v){
+  const p=S.prov.find(x=>x.id===id);if(!p)return;
+  if(campo==='plazo_dias')v=parseInt(v)||0;else if(campo==='activo')v=!!v;else{v=(v||'').trim();if(campo==='nombre'&&!v)return alert('El nombre no puede quedar vacío');v=v||null;}
+  p[campo]=v;save();toast('Proveedor actualizado ✓');if(campo==='activo')render();
+  sbUp('proveedores',provRow(p));
+}
+function delProveedor(id){
+  if(sesion?.rol!=='dueno')return alert('Solo el Dueño puede eliminar.');
+  if(comprasProv(id).length||pagosProv(id).length)return alert('Este proveedor tiene compras o pagos cargados. No se puede borrar: desactivalo para que no aparezca más en las compras.');
+  if(!confirm('¿Eliminar proveedor?'))return;
+  S.prov=S.prov.filter(x=>x.id!==id);provId=null;save();render();sbDel('proveedores',id);
+}
+function rProvDetail(id){
+  const p=S.prov.find(x=>x.id===id);if(!p){provId=null;return rProveedores();}
+  const r=resumenProv(id);
+  const pendRows=r.pendientes.length?r.pendientes.map(x=>`<div class="lote-card" style="border-left:3px solid ${x.c.vence&&x.c.vence<arDay()?'var(--rd)':'var(--ac)'}">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><div style="font-size:12px;font-weight:600">Compra ${fDL(x.c.day)}${x.c.nro_factura?' · F/'+esc(x.c.nro_factura):''}</div>
+          <div style="font-size:10px;font-family:var(--mo)">${venceTxt(x.c.vence)}</div>
+          ${x.cubierto>0?`<div style="font-size:10px;color:var(--tx3);font-family:var(--mo)">de ${$m(x.deuda)} · ya pagaste ${$m(x.cubierto)}</div>`:''}</div>
+        <div style="font-size:14px;font-weight:700;font-family:var(--mo);color:var(--rd)">${$m(x.pendiente)}</div>
+      </div></div>`).join(''):`<div class="empty-row">No le debés ninguna factura</div>`;
+  const movs=[...comprasProv(id).map(c=>({t:'c',day:c.day,ts:c.created_at||'',c})),...pagosProv(id).map(x=>({t:'p',day:String(x.day).slice(0,10),ts:x.created_at||'',x}))]
+    .sort((a,b)=>b.day.localeCompare(a.day)||String(b.ts).localeCompare(String(a.ts)));
+  const movRows=movs.length?movs.map(m=>{
+    if(m.t==='p'){const x=m.x,met=[x.pago_efectivo>0?'Ef '+$m(x.pago_efectivo):'',x.pago_transferencia>0?'Tr '+$m(x.pago_transferencia):''].filter(Boolean).join(' + ');
+      return`<div class="lote-card" style="border-left:3px solid var(--gn)"><div style="display:flex;justify-content:space-between;align-items:center">
+        <div><div style="font-size:12px;font-weight:600;color:var(--gn)">✓ Pago</div><div style="font-size:10px;color:var(--tx3);font-family:var(--mo)">${fDL(m.day)} · ${x.time||''} · ${met}${x.note?' · '+esc(x.note):''}</div></div>
+        <div style="text-align:right"><div style="font-size:14px;font-weight:700;font-family:var(--mo);color:var(--gn)">-${$m(x.monto)}</div>${sesion?.rol==='dueno'?`<button class="dbtn" onclick="delPagoProv('${x.id}')" style="margin-top:3px">✕</button>`:''}</div></div></div>`;}
+    const c=m.c,d=deudaCompra(c);
+    return`<div class="lote-card" style="border-left:3px solid ${d>0?'var(--rd)':'var(--tx3)'}"><div style="display:flex;justify-content:space-between;align-items:center">
+      <div><div style="font-size:12px;font-weight:600">Compra${c.nro_factura?' · F/'+esc(c.nro_factura):''}</div><div style="font-size:10px;color:var(--tx3);font-family:var(--mo)">${fDL(c.day)} · total ${$m(c.total)}${d<c.total?' · pagado en el momento '+$m(c.total-d):''}</div></div>
+      <div style="font-size:14px;font-weight:700;font-family:var(--mo);color:${d>0?'var(--rd)':'var(--tx2)'}">${d>0?'+'+$m(d):'contado'}</div></div></div>`;
+  }).join(''):`<div class="empty-row">Sin movimientos todavía</div>`;
+  return`<button class="btn" onclick="volverProvList()" style="margin-bottom:8px">‹ Proveedores</button>
+  <div class="kpis t3">
+    <div class="kc hi"><div class="kl">${r.saldo>=0?'Le debés':'A tu favor'}</div><div class="kv ${r.saldo>0?'r':'g'}">${$m(Math.abs(r.saldo))}</div><div class="kh">${esc(p.nombre)}</div></div>
+    <div class="kc"><div class="kl">Vencido</div><div class="kv ${r.vencido>0.5?'r':''}" style="font-size:14px">${$m(r.vencido)}</div></div>
+    <div class="kc"><div class="kl">Próx. vencimiento</div><div class="kv" style="font-size:12px">${r.prox?fD(r.prox):'—'}</div></div>
+  </div>
+  <div class="blk"><div class="bt">Registrar pago — ${fDL(day)}</div>
+    <div class="fr"><div class="fl"><label>Efectivo $</label><input type="number" id="pp-ef" placeholder="0"></div><div class="fl"><label>Transferencia $</label><input type="number" id="pp-tr" placeholder="0"></div></div>
+    <div class="fr"><div class="fl"><label>Nota</label><input type="text" id="pp-note" placeholder="opcional (nro. de transferencia, recibo...)"></div></div>
+    <button class="btn btnp" onclick="registrarPagoProv('${p.id}')" style="width:100%;margin-top:6px">✓ Registrar pago</button>
+    <div style="font-size:9px;color:var(--tx3);font-family:var(--mo);margin-top:4px">Se carga en la fecha de arriba. Cancela primero las facturas más viejas. No toca la caja del día ni suma gasto.</div>
+  </div>
+  <div class="sh">Facturas pendientes</div>${pendRows}
+  <div class="sh">Movimientos</div>${movRows}
+  <div class="blk"><div class="bt">Datos del proveedor</div>
+    <div class="fr"><div class="fl" style="flex:2"><label>Nombre</label><input type="text" value="${esc(p.nombre)}" onchange="updProv('${p.id}','nombre',this.value)"></div><div class="fl" style="max-width:90px"><label>Plazo (días)</label><input type="number" value="${+p.plazo_dias||0}" onchange="updProv('${p.id}','plazo_dias',this.value)"></div></div>
+    <div class="fr"><div class="fl"><label>Teléfono</label><input type="text" value="${esc(p.telefono||'')}" onchange="updProv('${p.id}','telefono',this.value)"></div><div class="fl"><label>CUIT</label><input type="text" value="${esc(p.cuit||'')}" onchange="updProv('${p.id}','cuit',this.value)"></div></div>
+    <div style="font-size:9px;color:var(--tx3);font-family:var(--mo);margin:4px 0">El plazo nuevo aplica a las compras que cargues desde ahora.</div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button class="btn" onclick="updProv('${p.id}','activo',${p.activo===false})" style="flex:1">${p.activo===false?'Reactivar':'Desactivar'}</button>
+      ${sesion?.rol==='dueno'?`<button class="btn btnr" onclick="delProveedor('${p.id}')" style="flex:1">Eliminar</button>`:''}
+    </div>
+  </div>`;
+}
+function registrarPagoProv(id){
+  const p=S.prov.find(x=>x.id===id);if(!p)return;
+  const ef=parseFloat(document.getElementById('pp-ef')?.value)||0,tr=parseFloat(document.getElementById('pp-tr')?.value)||0,note=document.getElementById('pp-note')?.value.trim();
+  const monto=ef+tr;if(monto<=0)return alert('Cargá cuánto le pagaste (efectivo y/o transferencia)');
+  const saldo=resumenProv(id).saldo;
+  if(monto>saldo+0.5&&!confirm(`Le debés ${$m(Math.max(0,saldo))} y estás pagando ${$m(monto)}. Lo que sobra queda a tu favor para la próxima factura. ¿Seguir?`))return;
+  const row={id:uid(),day,proveedor_id:id,monto,pago_efectivo:ef,pago_transferencia:tr,note:note||null,usuario:sesion?.nombre||'—',time:arTime()};
+  S.pp.push(row);save();render();toast(`Pago a ${p.nombre} registrado ✓`);
+  sbUp('pagos_proveedor',row);
+}
+function delPagoProv(pid){
+  if(sesion?.rol!=='dueno')return alert('Solo el Dueño puede eliminar.');
+  const x=S.pp.find(y=>y.id===pid);if(!x)return;
+  if(!confirm(`¿Eliminar el pago de ${$m(x.monto)} del ${fDL(String(x.day).slice(0,10))}? La deuda vuelve a subir.`))return;
+  S.pp=S.pp.filter(y=>y.id!==pid);save();render();sbDel('pagos_proveedor',pid);
 }
 
 /* ══ REPORTES ══════════════════════════════════════════════════════ */
@@ -2057,19 +2226,23 @@ function exportExcel(){
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(sta),'Stock');
   const cli=[['Cliente','Teléfono','Saldo Cta.Cte.','Última compra','Kg últimos 30 días']];S.ccl.forEach(c=>{const r=resumenCliente(c.id);cli.push([c.nombre,c.telefono||'',saldoClienteCC(c.id),r.ult?fDL(r.ult):'',+r.kg30.toFixed(2)]);});
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(cli),'Clientes');
+  const pvx=[['Proveedor','Teléfono','CUIT','Plazo (días)','Comprado a cuenta','Pagado','Saldo','Vencido']];S.prov.forEach(p=>{const r=resumenProv(p.id);pvx.push([p.nombre,p.telefono||'',p.cuit||'',p.plazo_dias||0,r.aCuenta,r.pagado,r.saldo,r.vencido]);});
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(pvx),'Proveedores');
+  const ppx=[['Fecha','Hora','Proveedor','Monto','Efectivo','Transferencia','Nota']];[...S.pp].sort((a,b)=>String(a.day).localeCompare(String(b.day))).forEach(x=>ppx.push([fDL(String(x.day).slice(0,10)),x.time||'',nombreProv(x.proveedor_id),x.monto,x.pago_efectivo||0,x.pago_transferencia||0,x.note||'']));
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(ppx),'Pagos a proveedores');
   XLSX.writeFile(wb,`TheChickenCoop_${arDay().replace(/-/g,'')}.xlsx`);toast('Excel descargado ✓');
 }
 
 /* ══ BACKUP ══════════════════════════════════════════════════════
    Baja TODAS las tablas directo de Supabase a un archivo .json.
    Es la copia de seguridad: guardala fuera del celular (Drive, mail).    */
-const TABLAS_BACKUP=['usuarios','stock_groups','stock_variants','insumos','clientes_cc','cliente_precios','ventas','caja_movimientos','compras','compras_items','cortes','cortes_items','elaboraciones','elaboraciones_items','gastos','cierres','retiros_stock'];
+const TABLAS_BACKUP=['usuarios','stock_groups','stock_variants','insumos','clientes_cc','cliente_precios','ventas','caja_movimientos','proveedores','compras','compras_items','cortes','cortes_items','elaboraciones','elaboraciones_items','gastos','cierres','retiros_stock','pagos_proveedor'];
 async function exportBackup(){
   if(OB.length&&!confirm(`Hay ${OB.length} registro(s) que todavía no subieron. El backup baja lo que está en la nube. ¿Seguir igual?`))return;
   toast('Bajando backup...');
   try{
     const datos={generado:new Date().toISOString(),proyecto:'vmsjwvudqxfadrcasexu',tablas:{}};
-    for(const t of TABLAS_BACKUP){try{datos.tablas[t]=await sbQ(t,'select=*&order=id');}catch(e){if(t!=='cliente_precios'&&t!=='retiros_stock')throw e;}}
+    for(const t of TABLAS_BACKUP){try{datos.tablas[t]=await sbQ(t,'select=*&order=id');}catch(e){if(!['cliente_precios','retiros_stock','proveedores','pagos_proveedor'].includes(t))throw e;}}
     const a=document.createElement('a');
     a.href=URL.createObjectURL(new Blob([JSON.stringify(datos)],{type:'application/json'}));
     a.download=`TCC_backup_${datos.generado.slice(0,16).replace(/[-:T]/g,'')}.json`;
