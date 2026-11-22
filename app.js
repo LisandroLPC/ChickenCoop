@@ -1782,6 +1782,35 @@ function resumenProv(id){
   const prox=imp.map(x=>x.c.vence).filter(v=>v&&v>=hoy).sort()[0]||null;
   return{aCuenta,pagado,saldo:aCuenta-pagado,vencido,prox,pendientes:imp};
 }
+// Deuda neta con todos los proveedores al cierre de una fecha (incluida). Fechas 'YYYY-MM-DD' comparan como texto.
+function deudaProvAl(f){
+  const comp=S.co.filter(c=>c.proveedor_id&&String(c.day)<=f).reduce((s,c)=>s+deudaCompra(c),0);
+  const pag=S.pp.filter(x=>String(x.day).slice(0,10)<=f).reduce((s,x)=>s+(+x.monto||0),0);
+  return comp-pag;
+}
+// Flujo de plata del mes vs resultado: resultado - aumento de deuda con proveedores = plata que quedó de verdad
+function flujoProvMes(ym,resultado){
+  const pg=S.pp.filter(x=>String(x.day).startsWith(ym));
+  const pagEf=pg.reduce((s,x)=>s+(+x.pago_efectivo||0),0),pagTr=pg.reduce((s,x)=>s+(+x.pago_transferencia||0),0);
+  const ini=deudaProvAl(getPrevDay(ym+'-01')),fin=deudaProvAl(ym+'-31');
+  const aCuenta=S.co.filter(c=>c.proveedor_id&&String(c.day).startsWith(ym)).reduce((s,c)=>s+deudaCompra(c),0);
+  return{pagEf,pagTr,pagos:pagEf+pagTr,ini,fin,aCuenta,var:fin-ini,plataReal:resultado-(fin-ini)};
+}
+function blkFlujoProv(ym,resultado){
+  if(!S.prov.length&&!S.pp.length)return'';
+  const f=flujoProvMes(ym,resultado);
+  const fila=(l,v,col,b)=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--br)"><span style="font-size:11px;color:var(--tx2)${b?';font-weight:600':''}">${l}</span><span style="font-family:var(--mo);${b?'font-weight:700;':''}color:${col||'var(--tx)'}">${v}</span></div>`;
+  return`<div class="blk"><div class="bt">Proveedores y plata real del mes</div>
+    ${fila('Compras a cuenta del mes (deuda nueva)',$m(f.aCuenta),'var(--rd)')}
+    ${fila('Pagos a proveedores del mes',$m(f.pagos)+`<span style="font-size:9px;color:var(--tx3)"> · ef ${$m(f.pagEf)} · tr ${$m(f.pagTr)}</span>`,'var(--gn)')}
+    ${fila('Deuda con proveedores al inicio',$m(f.ini))}
+    ${fila('Deuda con proveedores al final',$m(f.fin))}
+    ${fila(f.var>=0?'La deuda subió':'La deuda bajó',(f.var>=0?'+':'-')+$m(Math.abs(f.var)),f.var>0?'var(--rd)':'var(--gn)')}
+    ${fila('Resultado del mes',$m(resultado),resultado>=0?'var(--gn)':'var(--rd)')}
+    ${fila('💵 Plata real del mes',$m(f.plataReal),f.plataReal>=0?'var(--gn)':'var(--rd)',true)}
+    <div style="font-size:9px;color:var(--tx3);font-family:var(--mo);margin-top:5px">Plata real = Resultado − lo que subió la deuda con proveedores (o + lo que bajó). Es lo que te tiene que coincidir con el físico. La diferencia no se perdió: es lo que todavía le debés al proveedor.</div>
+  </div>`;
+}
 function diasEntre(a,b){return Math.round((new Date(b+'T12:00:00')-new Date(a+'T12:00:00'))/86400000);}
 function venceTxt(v){
   if(!v)return'<span style="color:var(--tx3)">sin vencimiento</span>';
@@ -2182,6 +2211,7 @@ function rRepFin(mthTabs){
   <div class="kpis t3"><div class="kc"><div class="kl">Margen</div><div class="kv" style="color:${margenCol}">${margen}%</div></div><div class="kc"><div class="kl">Efectivo total</div><div class="kv g" style="font-size:14px">${$m(efectivoTotal)}</div></div><div class="kc"><div class="kl">Digital total</div><div class="kv b" style="font-size:14px">${$m(digitalTotal)}</div></div></div>
   ${ingExtra>0||egTotal>0?`<div class="blk"><div class="bt">Movimientos de caja del período</div><div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--br)"><span style="font-size:11px;color:var(--tx2)">Ingresos extra</span><span style="font-family:var(--mo);color:var(--gn)">${$m(ingExtra)}</span></div><div style="display:flex;justify-content:space-between;padding:5px 0"><span style="font-size:11px;color:var(--tx2)">Egresos extra</span><span style="font-family:var(--mo);color:var(--rd)">${$m(egTotal)}</span></div></div>`:''}
   ${blkRetiros(rMonth,resultado)}
+  ${blkFlujoProv(rMonth,resultado)}
   <div class="tbk"><div class="tt">Gastos operativos por categoría</div><table><thead><tr><th>Categoría</th><th>Monto</th><th>%</th></tr></thead><tbody>${catRows}</tbody></table></div>
   ${diasCerrados>0?`<div class="blk"><div class="bt">Diferencias de caja del mes (faltante/sobrante)</div><div style="display:flex;justify-content:space-between;padding:5px 0"><span style="font-size:11px;color:var(--tx2)">Acumulado (${diasCerrados} día${diasCerrados===1?'':'s'} cerrado${diasCerrados===1?'':'s'})</span><span style="font-family:var(--mo);font-weight:600;color:${totalDif>=0?'var(--gn)':'var(--rd)'}">${totalDif>=0?'+':''}${$m(totalDif)}</span></div></div><div class="tbk"><table><thead><tr><th>Día</th><th>Diferencia</th></tr></thead><tbody>${difRows}</tbody></table></div>`:''}
   ${evoRows}
@@ -2217,8 +2247,8 @@ function exportExcel(){
   const cja=[['Fecha','Hora','Tipo','Descripción','Método','Monto','Cliente']];Object.entries(S.caja).sort(([a],[b])=>a.localeCompare(b)).forEach(([d,ms])=>ms.forEach(m=>cja.push([fDL(d),m.time||'',m.tipo,m.descripcion,m.metodo,m.monto,nombreCliente(m.cliente_cc_id)])));
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(cja),'Caja');
   // Resumen: los gastos totales incluyen compras, igual que el Resultado
-  const rm=[['Mes','Ventas (sin Cta.Cte.)','Cobros Cta.Cte.','Efectivo','Transferencias','Gastos de caja','Gastos del local','Compras','Gastos totales','Resultado','Mis retiros (costo, aparte)']];
-  getMths().forEach(ym=>{const d=mData(ym);rm.push([fM(ym),d.tv,d.cobrosCC,d.tvEf,d.tvTr,d.tg-d.tgLocal,d.tgLocal,d.tCompras,d.tg+d.tCompras,d.resultado,retirosPeriodo(x=>x.startsWith(ym)).costo]);});
+  const rm=[['Mes','Ventas (sin Cta.Cte.)','Cobros Cta.Cte.','Efectivo','Transferencias','Gastos de caja','Gastos del local','Compras','Gastos totales','Resultado','Mis retiros (costo, aparte)','Pagos a proveedores','Deuda proveedores fin de mes','Plata real']];
+  getMths().forEach(ym=>{const d=mData(ym);rm.push([fM(ym),d.tv,d.cobrosCC,d.tvEf,d.tvTr,d.tg-d.tgLocal,d.tgLocal,d.tCompras,d.tg+d.tCompras,d.resultado,retirosPeriodo(x=>x.startsWith(ym)).costo,...(()=>{const f=flujoProvMes(ym,d.resultado);return[f.pagos,f.fin,f.plataReal];})()]);});
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rm),'Resumen mensual');
   const rtx=[['Fecha','Hora','Producto','Cantidad','Stock usado','Unidad','Costo/u','Costo total','Valor venta','Nota']];(S.rt||[]).slice().sort((a,b)=>String(a.day).localeCompare(String(b.day))).forEach(r=>rtx.push([fDL(String(r.day).slice(0,10)),r.time||'',r.nombre,r.qty,r.stock_used,r.unit||'',r.costo_unit||0,r.costo_total||0,r.valor_venta||0,r.note||'']));
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rtx),'Mis retiros');
